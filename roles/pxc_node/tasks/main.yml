@@ -99,7 +99,6 @@
   ansible.builtin.service:
     name: "mysql@bootstrap.service"
     state: started
-    enabled: yes
   when: (bootstrap_first_node | default(false))
 
 - name: Start MySQL service on remaining nodes (Phase 3)

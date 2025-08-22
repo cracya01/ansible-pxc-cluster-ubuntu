@@ -39,12 +39,29 @@
         force: no
       when: not ca_key_stat.stat.exists
 
-    - name: Generate CA certificate if absent (module)
-      community.crypto.x509_certificate:
-        path: "{{ ca_crt }}"
-        privatekey_path: "{{ ca_key }}"
-        provider: selfsigned
-        selfsigned_not_after: "+3650d"
+    - name: Write CA openssl.cnf (when CA missing)
+      ansible.builtin.copy:
+        dest: "{{ ca_openssl_cnf }}"
+        mode: '0644'
+        content: |
+          [ req ]
+          distinguished_name = dn
+          x509_extensions = v3_ca
+          prompt = no
+
+          [ dn ]
+          CN = PXC-CA
+
+          [ v3_ca ]
+          basicConstraints = critical, CA:TRUE
+          keyUsage = critical, keyCertSign, cRLSign
+          subjectKeyIdentifier = hash
+          authorityKeyIdentifier = keyid:always,issuer
+      when: (not (regenerate_tls | default(false))) and (not ca_crt_stat.stat.exists)
+
+    - name: Generate CA certificate with openssl (when CA missing)
+      ansible.builtin.command:
+        cmd: "openssl req -x509 -new -nodes -key {{ ca_key }} -sha256 -days 3650 -out {{ ca_crt }} -config {{ ca_openssl_cnf }} -extensions v3_ca -set_serial 1"
       when: (not (regenerate_tls | default(false))) and (not ca_crt_stat.stat.exists)
 
     - name: Write CA openssl.cnf (only when regenerate)

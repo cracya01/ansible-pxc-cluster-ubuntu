@@ -1,3 +1,7 @@
 .DS_Store
 ._*
 /tls/
+
+# node_modules 等常见包目录
+
+/logs/

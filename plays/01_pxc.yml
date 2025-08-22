@@ -65,17 +65,16 @@
           args:
             executable: /bin/bash
 
-        - name: Wait for mysqld to accept connections
+        - name: Wait for temporary mysqld socket (root reset)
           ansible.builtin.wait_for:
-            host: 127.0.0.1
-            port: 3306
-            state: started
-            delay: 2
+            path: /var/run/mysqld/mysqld.sock
+            state: present
             timeout: 30
+          when: (bootstrap_first_node | default(false))
 
         - name: Reset root password to default
           ansible.builtin.shell: |
-            mysql -u root <<'EOSQL'
+            mysql  --protocol=SOCKET --socket=/var/run/mysqld/mysqld.sock -u root <<'EOSQL'
             FLUSH PRIVILEGES;
             ALTER USER 'root'@'localhost' IDENTIFIED BY 'changeme';
             FLUSH PRIVILEGES;
@@ -88,9 +87,14 @@
           args:
             executable: /bin/bash
 
-        - name: Pause to ensure mysqld has stopped
-          ansible.builtin.pause:
-            seconds: 5
+        - name: Wait until mysqld process exits (max 3 min)
+          ansible.builtin.command: pgrep -x mysqld
+          register: mysqld_pgrep
+          failed_when: false
+          changed_when: false
+          retries: 180
+          delay: 1
+          until: mysqld_pgrep.rc != 0
 
         - name: Start mysql service normally
           ansible.builtin.service:

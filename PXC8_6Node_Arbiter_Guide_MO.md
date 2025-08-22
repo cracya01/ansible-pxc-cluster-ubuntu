@@ -39,8 +39,20 @@ sudo apt-get autoremove -y --purge
 
 # Clean up all remaining directories and file contents
 sudo rm -rf /etc/mysql /var/log/mysql
+# Critical: Only clear the contents of the PXC data directory
+sudo rm -rf /data/mysql/*
+# Critical: Move old logs to a backup directory to avoid conflicts during reinstallation
+TIMESTAMP=$(date +%Y%m%d%H%M%S)
+sudo mkdir -p /tmp/mysql_logs_backup_${TIMESTAMP}
+sudo mv /data/logs/mysql/* /tmp/mysql_logs_backup_${TIMESTAMP}/ 2>/dev/null || true
 # Critical: Only clear the contents, do not delete the directory itself
 sudo mkdir -p /var/lib/mysql && sudo rm -rf /var/lib/mysql/*
+
+# Critical: Clean up potentially conflicting systemd unit files and reload the daemon
+sudo rm -f /etc/systemd/system/mysqld.service
+sudo rm -f /etc/systemd/system/multi-user.target.wants/mysql.service
+sudo rm -f /etc/systemd/system/multi-user.target.wants/mysql@bootstrap.service
+sudo systemctl daemon-reload
 ```
 
 ---
@@ -91,6 +103,15 @@ sudo hostnamectl set-hostname arbiter-hk-node001
 sudo swapoff -a
 # Permanently disable by commenting out the swap line in /etc/fstab
 sudo sed -i '/ swap / s/^\(.*\)$/#\1/g' /etc/fstab
+```
+
+### 1.4 創建並授權數據和日誌目錄 (在6台數據主機上執行)
+
+在 **6 台 PXC 數據主機**上，創建並授權 PXC 將要使用的數據和日誌目錄。
+
+```bash
+sudo mkdir -p /data/mysql /data/logs/mysql
+sudo chown -R mysql:mysql /data/mysql /data/logs/mysql
 ```
 
 ---
@@ -380,7 +401,7 @@ sleep 5 # Wait for mysqld to start
 
 # 3. Use a heredoc to automatically input commands to reset the root password
 # Replace <YOUR_STRONG_PASSWORD> with your actual password
-mysql -u root <<EOSQL
+mysql  --protocol=SOCKET --socket=/var/run/mysqld/mysqld.sock -u root <<EOSQL
 FLUSH PRIVILEGES;
 ALTER USER 'root'@'localhost' IDENTIFIED BY '<YOUR_STRONG_PASSWORD>';
 FLUSH PRIVILEGES;
@@ -497,4 +518,3 @@ mysql -e "SHOW VARIABLES LIKE 'have_ssl';"                  # 預期 YES
   - 確認依「引導 → 逐台加入 → 啟動仲裁器」順序；不要同時啟動全部節點。
 - `Unrecognized parameter` 類錯誤
   - 移除不支援或已棄用的 `wsrep_provider_options` 參數（例如 `gcert.pc_lazy_deserialization`、`gcs.fc_master_slave`）。
-

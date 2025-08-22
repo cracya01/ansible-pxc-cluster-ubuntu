@@ -62,9 +62,20 @@
     group: root
     mode: '0644'
 
-- name: Start and enable garb service (Phase 3)
-  ansible.builtin.service:
+- name: Reload systemd daemon (Phase 3)
+  ansible.builtin.systemd:
+    daemon_reload: yes
+
+- name: Start garb service (Phase 3)
+  ansible.builtin.systemd:
     name: garb
     state: started
+
+- name: Enable garb when supported (Phase 3, optional)
+  ansible.builtin.systemd:
+    name: garb
     enabled: yes
+  register: garb_enable
+  failed_when: false
+  changed_when: garb_enable.changed | default(false)
 
