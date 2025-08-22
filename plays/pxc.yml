@@ -1,0 +1,100 @@
+---
+- hosts: pxc_nodes
+  become: yes
+  serial: 1
+  roles:
+    - pxc_node
+
+- hosts: pxc_arbiter
+  become: yes
+  roles:
+    - pxc_garb
+
+# After all nodes and the arbiter have been configured and started, convert
+# the bootstrap node to run under the standard mysql service.  This play runs
+# once on the bootstrap node and is executed after the previous plays have
+# completed.
+- hosts: pxc_nodes
+  become: yes
+  gather_facts: false
+  tasks:
+    - name: Convert bootstrap node to normal service
+      when: (bootstrap_first_node | default(false))
+      block:
+        - name: Stop bootstrap service
+          ansible.builtin.service:
+            name: "mysql@bootstrap.service"
+            state: stopped
+
+        - name: Ensure mysqld processes are terminated
+          ansible.builtin.shell: "pkill mysqld || true"
+          args:
+            executable: /bin/bash
+
+        - name: Pause briefly to allow shutdown
+          ansible.builtin.pause:
+            seconds: 3
+
+        - name: Start normal mysql service
+          ansible.builtin.service:
+            name: mysql
+            state: started
+            enabled: yes
+
+# After the cluster is fully operational, reset the MySQL root password on a
+# single node.  The bootstrap node is chosen as the target.  This sequence
+# stops the MySQL service, starts mysqld with grant tables disabled and
+# replication turned off, updates the root password to a known default
+# ("changeme"), then gracefully stops the temporary process and restarts
+# the standard mysql service.
+- hosts: pxc_nodes
+  become: yes
+  gather_facts: false
+  tasks:
+    - name: Reset root password on bootstrap node
+      when: (bootstrap_first_node | default(false))
+      block:
+        - name: Stop mysql service
+          ansible.builtin.service:
+            name: mysql
+            state: stopped
+
+        - name: Start mysqld without grant tables and wsrep
+          ansible.builtin.shell: |
+            nohup mysqld --skip-grant-tables --wsrep-on=OFF > /dev/null 2>&1 &
+          args:
+            executable: /bin/bash
+
+        - name: Wait for mysqld to accept connections
+          ansible.builtin.wait_for:
+            host: 127.0.0.1
+            port: 3306
+            state: started
+            delay: 2
+            timeout: 30
+
+        - name: Reset root password to default
+          ansible.builtin.shell: |
+            mysql -u root <<'EOSQL'
+            FLUSH PRIVILEGES;
+            ALTER USER 'root'@'localhost' IDENTIFIED BY 'changeme';
+            FLUSH PRIVILEGES;
+            EOSQL
+          args:
+            executable: /bin/bash
+
+        - name: Stop temporary mysqld instance
+          ansible.builtin.shell: pkill mysqld || true
+          args:
+            executable: /bin/bash
+
+        - name: Pause to ensure mysqld has stopped
+          ansible.builtin.pause:
+            seconds: 5
+
+        - name: Start mysql service normally
+          ansible.builtin.service:
+            name: mysql
+            state: started
+            enabled: yes
+

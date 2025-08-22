@@ -1,0 +1,17 @@
+# /etc/default/garb - Configuration for Galera Arbitrator Daemon
+
+# Cluster connection address.
+# The startup script adds the "gcomm://" prefix automatically.
+# This list MUST BE IDENTICAL to wsrep_cluster_address on data nodes.
+GALERA_NODES="{{ (groups['pxc_nodes'] + groups.get('pxc_arbiter', [])) | join(',') }}"
+
+# Cluster name. MUST be IDENTICAL to wsrep_cluster_name.
+GALERA_GROUP="pxc-mo-cluster"
+
+# Optional: Galera internal options string (e.g. SSL settings)
+# see https://galeracluster.com/library/documentation/galera-parameters.html
+GALERA_OPTIONS="socket.ssl=YES; socket.ssl_key=/etc/mysql/ssl/server-key.pem; socket.ssl_cert=/etc/mysql/ssl/server-cert.pem; socket.ssl_ca=/etc/mysql/ssl/ca.pem; socket.ssl_cipher=AES128-SHA256"
+
+# Optional: Log file for garbd. By default, logs to syslog.
+# Deprecated for systemd services, use "journalctl -u garb" instead.
+# LOG_FILE=""

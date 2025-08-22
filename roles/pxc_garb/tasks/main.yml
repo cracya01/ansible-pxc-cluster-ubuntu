@@ -1,0 +1,70 @@
+---
+# Phase 2: Repos and packages only for arbiter (no configuration, no service start)
+- name: Set system hostname to inventory_hostname (Phase 1)
+  ansible.builtin.hostname:
+    name: "{{ inventory_hostname }}"
+
+- name: Ensure PXC cluster hosts are present in /etc/hosts (Phase 1)
+  ansible.builtin.blockinfile:
+    path: /etc/hosts
+    marker: "# {mark} PXC CLUSTER HOSTS"
+    block: |
+      {% for host in (groups['pxc_nodes'] + groups.get('pxc_arbiter', [])) %}
+      {{ hostvars[host].ansible_host }} {{ host }}
+      {% endfor %}
+    owner: root
+    group: root
+    mode: '0644'
+- name: Install prerequisites (Phase 2)
+  ansible.builtin.apt:
+    name:
+      - wget
+      - gnupg2
+      - lsb-release
+      - curl
+    state: present
+    update_cache: yes
+
+- name: Download percona-release package (Phase 2)
+  ansible.builtin.get_url:
+    url: "https://repo.percona.com/apt/percona-release_latest.generic_all.deb"
+    dest: "/tmp/percona-release_latest.generic_all.deb"
+    mode: "0644"
+
+- name: Install percona-release package (Phase 2)
+  ansible.builtin.apt:
+    deb: "/tmp/percona-release_latest.generic_all.deb"
+    update_cache: yes
+
+- name: Enable PXC 8.0 repository (Phase 2)
+  ansible.builtin.command: "percona-release setup pxc80"
+  changed_when: false
+
+- name: Install Galera Arbitrator (garbd) package only (Phase 2)
+  ansible.builtin.apt:
+    name: percona-xtradb-cluster-garbd
+    state: present
+    update_cache: yes
+
+# Phase 3: Configuration deployment and service management for the arbiter
+#
+# After installing the garbd package, deploy the configuration file and start
+# the arbitrator service.  The configuration derives the node list from the
+# combined PXC data nodes and the arbiter itself, and sets the cluster name
+# according to the reference guide.  TLS options are included exactly as
+# provided in the example.  Finally, the service is started and enabled.
+
+- name: Deploy garb configuration (Phase 3)
+  ansible.builtin.template:
+    src: garb.j2
+    dest: /etc/default/garb
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Start and enable garb service (Phase 3)
+  ansible.builtin.service:
+    name: garb
+    state: started
+    enabled: yes
+

@@ -1,0 +1,129 @@
+[mysqld]
+# =================================================================
+# Base Settings
+# =================================================================
+require_secure_transport        = ON
+user                            = mysql
+port                            = 3306
+datadir                         = /data/mysql
+pid-file                        = /var/run/mysqld/mysqld.pid
+socket                          = /var/run/mysqld/mysqld.sock
+tmpdir                          = /tmp
+skip-name-resolve
+explicit_defaults_for_timestamp
+default_authentication_plugin   = mysql_native_password
+character-set-server            = utf8mb4
+collation-server                = utf8mb4_0900_ai_ci
+init-connect                    = 'SET NAMES utf8mb4'
+
+# =================================================================
+# Connection & Limits
+# =================================================================
+max_connections                 = 2048
+max_connect_errors              = 100000
+back_log                        = 300
+thread_cache_size               = 64
+open_files_limit                = 65535
+table_open_cache                = 1024
+interactive_timeout             = 28800
+wait_timeout                    = 28800
+
+# =================================================================
+# Buffer & Cache
+# =================================================================
+max_allowed_packet              = 500M
+binlog_cache_size               = 1M
+max_heap_table_size             = 8M
+tmp_table_size                  = 128M
+read_buffer_size                = 2M
+read_rnd_buffer_size            = 8M
+sort_buffer_size                = 8M
+join_buffer_size                = 8M
+key_buffer_size                 = 4M
+bulk_insert_buffer_size         = 8M
+
+# =================================================================
+# Logging
+# =================================================================
+log-error                       = /data/logs/mysql/mysqld-error.log
+slow_query_log                  = 1
+long_query_time                 = 1
+slow_query_log_file             = /data/logs/mysql/mysql-slow.log
+log_queries_not_using_indexes   = ON
+expire_logs_days                = 7
+
+# =================================================================
+# SSL/TLS Settings
+# =================================================================
+ssl_ca                          = /etc/mysql/ssl/ca.pem
+ssl_cert                        = /etc/mysql/ssl/server-cert.pem
+ssl_key                         = /etc/mysql/ssl/server-key.pem
+
+# =================================================================
+# InnoDB
+# =================================================================
+default_storage_engine          = InnoDB
+innodb_file_per_table           = 1
+innodb_open_files               = 500
+# Sized for 4GB RAM
+innodb_buffer_pool_size         = 2G
+innodb_log_file_size            = 512M
+innodb_flush_log_at_trx_commit  = 2
+# Use O_DIRECT on Linux to avoid double buffering
+innodb_flush_method             = O_DIRECT
+innodb_write_io_threads         = 4
+innodb_read_io_threads          = 4
+innodb_thread_concurrency       = 0
+innodb_purge_threads            = 1
+innodb_log_buffer_size          = 2M
+innodb_max_dirty_pages_pct      = 90
+innodb_lock_wait_timeout        = 120
+
+# =================================================================
+# MyISAM
+# =================================================================
+myisam_sort_buffer_size         = 64M
+myisam_max_sort_file_size       = 10G
+
+# =================================================================
+# Binary Log & GTID
+# =================================================================
+# PXC requires ROW format
+binlog_format                   = ROW
+log_bin                         = /data/logs/mysql/mysql-bin
+log_slave_updates               = ON
+gtid_mode                       = ON
+enforce_gtid_consistency        = ON
+
+# =================================================================
+# Galera Cluster
+# =================================================================
+wsrep_on                        = ON
+wsrep_provider                  = /usr/lib/galera4/libgalera_smm.so
+wsrep_sst_method                = xtrabackup-v2
+pxc_strict_mode                 = ENFORCING
+pxc-encrypt-cluster-traffic     = ON
+# Match the number of CPU cores
+wsrep_slave_threads             = 2
+wsrep_retry_autocommit          = 10
+wsrep_provider_options          ="gcs.fc_limit=512; gcs.fc_factor=1.0"
+transaction-isolation           = READ-COMMITTED
+
+# Cluster topology. MUST be identical across all nodes.
+wsrep_cluster_name              = "pxc-mo-cluster"
+wsrep_cluster_address           = "gcomm://{{ (groups['pxc_nodes'] + groups.get('pxc_arbiter', [])) | join(',') }}"
+
+# =================================================================
+# Performance Schema
+# =================================================================
+performance_schema_consumer_events_waits_current=ON
+performance_schema_consumer_events_waits_history=ON
+performance_schema_consumer_events_waits_history_long=ON
+performance_schema_instrument='wait/%=ON'
+
+# =================================================================
+# Node Specific Settings - MUST BE UNIQUE PER NODE
+# =================================================================
+wsrep_node_name                 = "{{ wsrep_node_name }}"
+wsrep_node_address              = "{{ wsrep_node_address }}"
+server-id                       = {{ server_id }}

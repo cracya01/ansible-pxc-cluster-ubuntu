@@ -1,0 +1,112 @@
+---
+# Phase 1: Host initialization (optional toggles)
+- name: Set system hostname to inventory_hostname (Phase 1)
+  ansible.builtin.hostname:
+    name: "{{ inventory_hostname }}"
+
+- name: Ensure PXC cluster hosts are present in /etc/hosts (Phase 1)
+  ansible.builtin.blockinfile:
+    path: /etc/hosts
+    marker: "# {mark} PXC CLUSTER HOSTS"
+    block: |
+      {% for host in (groups['pxc_nodes'] + groups.get('pxc_arbiter', [])) %}
+      {{ hostvars[host].ansible_host }} {{ host }}
+      {% endfor %}
+    owner: root
+    group: root
+    mode: '0644'
+- name: Disable swap immediately (Phase 1)
+  ansible.builtin.command: swapoff -a
+  changed_when: false
+
+- name: Permanently disable swap in /etc/fstab (Phase 1)
+  ansible.builtin.replace:
+    path: /etc/fstab
+    regexp: '^(.*\s+swap\s+.*)$'
+    replace: '# \1'
+
+
+# Phase 2: Repos and packages only (no configuration, no service start)
+- name: Install prerequisites (Phase 2)
+  ansible.builtin.apt:
+    name:
+      - wget
+      - gnupg2
+      - lsb-release
+      - curl
+    state: present
+    update_cache: yes
+
+- name: Download percona-release package (Phase 2)
+  ansible.builtin.get_url:
+    url: "https://repo.percona.com/apt/percona-release_latest.generic_all.deb"
+    dest: "/tmp/percona-release_latest.generic_all.deb"
+    mode: "0644"
+
+- name: Install percona-release package (Phase 2)
+  ansible.builtin.apt:
+    deb: "/tmp/percona-release_latest.generic_all.deb"
+    update_cache: yes
+
+- name: Enable PXC 8.0 repository (Phase 2)
+  ansible.builtin.command: "percona-release setup pxc80"
+  changed_when: false
+
+- name: Install PXC packages only (Phase 2)
+  ansible.builtin.apt:
+    name:
+      - percona-xtradb-cluster
+      - percona-xtrabackup-80
+      - percona-toolkit
+    state: present
+    update_cache: yes
+
+# Installation complete.  Configuration and service management tasks follow.
+
+# -----------------------------------------------------------------------------
+# Phase 3: Configuration deployment and service management
+#
+# Once the Percona packages are installed, configure each node with a minimal
+# but production‑ready my.cnf.  The configuration template closely follows the
+# example provided in the deployment guide.  It populates the node specific
+# settings (wsrep_node_name, wsrep_node_address, server_id) from the inventory
+# and derives the cluster address from the full list of PXC data nodes plus
+# the arbiter host, if present.  No extra parameters are added beyond the
+# reference file.
+
+- name: Ensure data and log directories exist (Phase 3)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: mysql
+    group: mysql
+    mode: '0750'
+  loop:
+    - /data
+    - /data/mysql
+    - /data/logs
+    - /data/logs/mysql
+
+- name: Deploy mysqld configuration (Phase 3)
+  ansible.builtin.template:
+    src: mysqld.cnf.j2
+    dest: /etc/mysql/mysql.conf.d/mysqld.cnf
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Start bootstrap service on first node (Phase 3)
+  ansible.builtin.service:
+    name: "mysql@bootstrap.service"
+    state: started
+    enabled: yes
+  when: (bootstrap_first_node | default(false))
+
+- name: Start MySQL service on remaining nodes (Phase 3)
+  ansible.builtin.service:
+    name: mysql
+    state: started
+    enabled: yes
+  when: not (bootstrap_first_node | default(false))
+
+

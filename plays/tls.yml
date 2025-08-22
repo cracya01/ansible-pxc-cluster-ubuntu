@@ -1,0 +1,208 @@
+---
+- name: Generate CA and per-host certificates on controller
+  hosts: localhost
+  gather_facts: false
+  become: false
+  collections:
+    - community.crypto
+  vars:
+    tls_root: "{{ playbook_dir }}/../tls"
+    ca_dir:   "{{ tls_root }}/ca"
+    nodes_dir: "{{ tls_root }}/nodes"
+    ca_key:   "{{ ca_dir }}/ca.key"
+    ca_crt:   "{{ ca_dir }}/ca.pem"
+    ca_openssl_cnf: "{{ ca_dir }}/ca_openssl.cnf"
+  tasks:
+    - name: Stat CA key
+      ansible.builtin.stat:
+        path: "{{ ca_key }}"
+      register: ca_key_stat
+
+    - name: Stat CA cert
+      ansible.builtin.stat:
+        path: "{{ ca_crt }}"
+      register: ca_crt_stat
+
+    - name: Ensure directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - "{{ ca_dir }}"
+        - "{{ nodes_dir }}"
+
+    - name: Generate CA private key if absent
+      community.crypto.openssl_privatekey:
+        path: "{{ ca_key }}"
+        size: 4096
+        force: no
+      when: not ca_key_stat.stat.exists
+
+    - name: Generate CA certificate if absent (module)
+      community.crypto.x509_certificate:
+        path: "{{ ca_crt }}"
+        privatekey_path: "{{ ca_key }}"
+        provider: selfsigned
+        selfsigned_not_after: "+3650d"
+      when: (not (regenerate_tls | default(false))) and (not ca_crt_stat.stat.exists)
+
+    - name: Write CA openssl.cnf (only when regenerate)
+      ansible.builtin.copy:
+        dest: "{{ ca_openssl_cnf }}"
+        mode: '0644'
+        content: |
+          [ req ]
+          distinguished_name = dn
+          x509_extensions = v3_ca
+          prompt = no
+
+          [ dn ]
+          CN = PXC-CA
+
+          [ v3_ca ]
+          basicConstraints = critical, CA:TRUE
+          keyUsage = critical, keyCertSign, cRLSign
+          subjectKeyIdentifier = hash
+          authorityKeyIdentifier = keyid:always,issuer
+      when: (regenerate_tls | default(false))
+
+    - name: Force-generate CA key when regenerate
+      community.crypto.openssl_privatekey:
+        path: "{{ ca_key }}"
+        size: 4096
+        force: yes
+      when: (regenerate_tls | default(false))
+
+    - name: Generate CA certificate with openssl (regenerate)
+      ansible.builtin.command:
+        cmd: "openssl req -x509 -new -nodes -key {{ ca_key }} -sha256 -days 3650 -out {{ ca_crt }} -config {{ ca_openssl_cnf }} -extensions v3_ca -set_serial 1"
+      when: (regenerate_tls | default(false))
+
+    - name: Build node list
+      ansible.builtin.set_fact:
+        pxc_all_nodes: "{{ (groups.get('pxc_nodes', []) + groups.get('pxc_arbiter', [])) | unique }}"
+
+    - name: Create per-node dir
+      ansible.builtin.file:
+        path: "{{ nodes_dir }}/{{ item }}"
+        state: directory
+        mode: '0755'
+      loop: "{{ pxc_all_nodes }}"
+
+    - name: Generate server key
+      community.crypto.openssl_privatekey:
+        path: "{{ nodes_dir }}/{{ item }}/server-key.pem"
+        size: 2048
+      loop: "{{ pxc_all_nodes }}"
+
+    - name: Generate CSR with SAN (DNS + IP) via module
+      community.crypto.openssl_csr:
+        path: "{{ nodes_dir }}/{{ item }}/server.csr"
+        privatekey_path: "{{ nodes_dir }}/{{ item }}/server-key.pem"
+        common_name: "{{ item }}"
+        subject_alt_name:
+          - "DNS:{{ item }}"
+          - "IP:{{ hostvars[item].ansible_host }}"
+      loop: "{{ pxc_all_nodes }}"
+      when: not (regenerate_tls | default(false))
+
+    - name: Sign server cert by CA (module)
+      community.crypto.x509_certificate:
+        path: "{{ nodes_dir }}/{{ item }}/server-cert.pem"
+        csr_path: "{{ nodes_dir }}/{{ item }}/server.csr"
+        provider: ownca
+        ownca_path: "{{ ca_crt }}"
+        ownca_privatekey_path: "{{ ca_key }}"
+        ownca_not_after: "+3650d"
+      loop: "{{ pxc_all_nodes }}"
+      when: not (regenerate_tls | default(false))
+
+    - name: Write per-node openssl.cnf (regenerate)
+      ansible.builtin.copy:
+        dest: "{{ nodes_dir }}/{{ item }}/server_openssl.cnf"
+        mode: '0644'
+        content: |
+          [ req ]
+          distinguished_name = dn
+          req_extensions = v3_req
+          prompt = no
+
+          [ dn ]
+          CN = {{ item }}
+
+          [ v3_req ]
+          basicConstraints = CA:FALSE
+          keyUsage = critical, digitalSignature, keyEncipherment
+          extendedKeyUsage = serverAuth, clientAuth
+          subjectAltName = @alt_names
+
+          [ alt_names ]
+          DNS.1 = {{ item }}
+          IP.1 = {{ hostvars[item].ansible_host }}
+      loop: "{{ pxc_all_nodes }}"
+      when: (regenerate_tls | default(false))
+
+    - name: Generate CSR with openssl (regenerate)
+      ansible.builtin.command:
+        cmd: "openssl req -new -key {{ nodes_dir }}/{{ item }}/server-key.pem -out {{ nodes_dir }}/{{ item }}/server.csr -config {{ nodes_dir }}/{{ item }}/server_openssl.cnf"
+      loop: "{{ pxc_all_nodes }}"
+      when: (regenerate_tls | default(false))
+
+    - name: Sign server cert with openssl (regenerate)
+      ansible.builtin.command:
+        cmd: "openssl x509 -req -in {{ nodes_dir }}/{{ item }}/server.csr -CA {{ ca_crt }} -CAkey {{ ca_key }} -CAcreateserial -out {{ nodes_dir }}/{{ item }}/server-cert.pem -days 3650 -sha256 -extensions v3_req -extfile {{ nodes_dir }}/{{ item }}/server_openssl.cnf"
+      loop: "{{ pxc_all_nodes }}"
+      when: (regenerate_tls | default(false))
+
+    - name: Cleanup CSR
+      ansible.builtin.file:
+        path: "{{ nodes_dir }}/{{ item }}/server.csr"
+        state: absent
+      loop: "{{ pxc_all_nodes }}"
+
+- name: Distribute certs to all hosts
+  hosts: pxc_nodes:pxc_arbiter
+  become: true
+  gather_facts: false
+  vars:
+    ssl_dir: /etc/mysql/ssl
+    nodes_dir: "{{ playbook_dir }}/../tls/nodes"
+    ca_crt:   "{{ playbook_dir }}/../tls/ca/ca.pem"
+    owner_user: "{{ 'mysql' if inventory_hostname in groups['pxc_nodes'] else 'root' }}"
+    owner_group: "{{ 'mysql' if inventory_hostname in groups['pxc_nodes'] else 'nogroup' }}"
+    ssl_dir_mode: "{{ '0700' if inventory_hostname in groups['pxc_nodes'] else '0750' }}"
+    key_mode: "{{ '0600' if inventory_hostname in groups['pxc_nodes'] else '0640' }}"
+  tasks:
+    - name: Ensure SSL directory
+      ansible.builtin.file:
+        path: "{{ ssl_dir }}"
+        state: directory
+        owner: "{{ owner_user }}"
+        group: "{{ owner_group }}"
+        mode: "{{ ssl_dir_mode }}"
+
+    - name: Copy CA certificate
+      ansible.builtin.copy:
+        src: "{{ ca_crt }}"
+        dest: "{{ ssl_dir }}/ca.pem"
+        owner: "{{ owner_user }}"
+        group: "{{ owner_group }}"
+        mode: '0644'
+
+    - name: Copy server certificate
+      ansible.builtin.copy:
+        src: "{{ nodes_dir }}/{{ inventory_hostname }}/server-cert.pem"
+        dest: "{{ ssl_dir }}/server-cert.pem"
+        owner: "{{ owner_user }}"
+        group: "{{ owner_group }}"
+        mode: '0644'
+
+    - name: Copy server private key
+      ansible.builtin.copy:
+        src: "{{ nodes_dir }}/{{ inventory_hostname }}/server-key.pem"
+        dest: "{{ ssl_dir }}/server-key.pem"
+        owner: "{{ owner_user }}"
+        group: "{{ owner_group }}"
+        mode: "{{ key_mode }}"
+
