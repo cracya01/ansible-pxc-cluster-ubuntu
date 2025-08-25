@@ -49,7 +49,7 @@ log-error                       = /data/logs/mysql/mysqld-error.log
 slow_query_log                  = 1
 long_query_time                 = 1
 slow_query_log_file             = /data/logs/mysql/mysql-slow.log
-log_queries_not_using_indexes   = ON
+log_queries_not_using_indexes   = OFF
 expire_logs_days                = 7
 
 # =================================================================
@@ -65,18 +65,17 @@ ssl_key                         = /etc/mysql/ssl/server-key.pem
 default_storage_engine          = InnoDB
 innodb_file_per_table           = 1
 innodb_open_files               = 500
-# Sized for 4GB RAM
-innodb_buffer_pool_size         = 2G
-innodb_log_file_size            = 512M
-innodb_flush_log_at_trx_commit  = 2
+innodb_buffer_pool_size         = {{ pxc_innodb_buffer_pool_size }}
+innodb_log_file_size            = {{ pxc_innodb_log_file_size }}
+innodb_flush_log_at_trx_commit  = {{ pxc_innodb_flush_log_at_trx_commit }}
 # Use O_DIRECT on Linux to avoid double buffering
 innodb_flush_method             = O_DIRECT
-innodb_write_io_threads         = 4
-innodb_read_io_threads          = 4
+innodb_write_io_threads         = {{ pxc_innodb_write_io_threads }}
+innodb_read_io_threads          = {{ pxc_innodb_read_io_threads }}
 innodb_thread_concurrency       = 0
-innodb_purge_threads            = 1
-innodb_log_buffer_size          = 2M
-innodb_max_dirty_pages_pct      = 90
+innodb_purge_threads            = {{ pxc_innodb_purge_threads }}
+innodb_log_buffer_size          = {{ pxc_innodb_log_buffer_size }}
+innodb_max_dirty_pages_pct      = {{ pxc_innodb_max_dirty_pages_pct }}
 innodb_lock_wait_timeout        = 120
 
 # =================================================================
@@ -104,7 +103,7 @@ wsrep_sst_method                = xtrabackup-v2
 pxc_strict_mode                 = ENFORCING
 pxc-encrypt-cluster-traffic     = ON
 # Match the number of CPU cores
-wsrep_slave_threads             = 2
+wsrep_slave_threads             = {{ pxc_wsrep_slave_threads }}
 wsrep_retry_autocommit          = 10
 wsrep_provider_options          ="gcs.fc_limit=512; gcs.fc_factor=1.0"
 transaction-isolation           = READ-COMMITTED

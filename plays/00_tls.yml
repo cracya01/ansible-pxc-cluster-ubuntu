@@ -191,6 +191,20 @@
     ssl_dir_mode: "{{ '0700' if inventory_hostname in groups['pxc_nodes'] else '0750' }}"
     key_mode: "{{ '0600' if inventory_hostname in groups['pxc_nodes'] else '0640' }}"
   tasks:
+    - name: Ensure mysql group exists on PXC nodes
+      ansible.builtin.group:
+        name: mysql
+        state: present
+      when: inventory_hostname in groups['pxc_nodes']
+
+    - name: Ensure mysql user exists on PXC nodes
+      ansible.builtin.user:
+        name: mysql
+        group: mysql
+        system: yes
+        state: present
+      when: inventory_hostname in groups['pxc_nodes']
+
     - name: Ensure SSL directory
       ansible.builtin.file:
         path: "{{ ssl_dir }}"

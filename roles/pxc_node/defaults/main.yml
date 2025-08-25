@@ -1,0 +1,50 @@
+# InnoDB 參數動態預設值，可在 group_vars/host_vars 覆蓋
+#
+# pxc_innodb_buffer_pool_size:
+#   Buffer Pool 是 InnoDB 用來緩存資料與索引的主要區域。根據 MySQL 的配置建議，
+#   在專用資料庫服務上可設定為實體記憶體的 80%，混合型主機則通常採用 50%。
+#   這裡計算為 ansible_memtotal_mb 的 0.5，再除以 1024 取整為 GB，並保證最小值為 1G。
+pxc_innodb_buffer_pool_size: "{{ [(((ansible_memtotal_mb | int) * 0.5) | int // 1024), 1] | max }}G"
+
+# pxc_innodb_log_file_size:
+#   redo log 檔大小建議約為 Buffer Pool 的 1/4。
+#   較大的 log 檔可以減少 checkpoint 刷盤次數，提高吞吐量，但會延長崩潰恢復時間。
+#   因此預設採用記憶體 12.5% (50% * 1/4) 的大小，並確保最小值為 256MB。
+pxc_innodb_log_file_size: "{{ [(((ansible_memtotal_mb | int) * 0.125) | int), 256] | max }}M"
+
+# pxc_innodb_log_buffer_size:
+#   日誌緩衝區用來暫存 redo log 資料。MySQL 8.0 將預設值提升至 16MB，
+#   以便大型交易不必在提交前頻繁寫盤。
+#   如負載極高或單筆交易特別大，可以再適度增加；這裡先設定為 16M。
+pxc_innodb_log_buffer_size: "16M"
+
+# pxc_innodb_write_io_threads:
+#   InnoDB 使用背景執行緒處理 I/O。官方建議設定為與 CPU 核心數相當，
+#   以充分利用磁碟和 CPU；若核心數未知，預設 4。
+pxc_innodb_write_io_threads: "{{ ansible_processor_vcpus | default(4) }}"
+
+# pxc_innodb_read_io_threads:
+#   讀 I/O 執行緒同理，通常與 write I/O thread 數一致，
+#   預設取 CPU 核心數（或 fallback 為 4）。
+pxc_innodb_read_io_threads: "{{ ansible_processor_vcpus | default(4) }}"
+
+# pxc_innodb_purge_threads:
+#   Purge thread 用於清理過期版本和垃圾資料。一般建議為 CPU 核心數的四分之一，
+#   至少保持 1 條執行緒；核心較多的伺服器可以適度增大。
+pxc_innodb_purge_threads: "{{ [(((ansible_processor_vcpus | default(1)) | int) // 4), 1] | max }}"
+
+
+# pxc_innodb_max_dirty_pages_pct:
+#   此參數控制 Buffer Pool 中髒頁的最大比例。預設 90% 表示允許較高的髒頁量，
+#   減少後台刷盤造成的 I/O 開銷；可依磁碟性能及業務需求調整。
+pxc_innodb_max_dirty_pages_pct: "90"
+
+# pxc_innodb_flush_log_at_trx_commit:
+#   設定 redo log 刷盤策略。0=每秒一次寫並 flush，1=每次 commit 都寫並 flush，
+#   2=每次 commit 寫但只每秒 flush 一次。設為 2 能平衡效能與耐久度，
+#   對 PXC 複寫環境通常足夠，若需要最高持久性可改為 1。
+pxc_innodb_flush_log_at_trx_commit: "2"
+
+# roles/pxc_node/defaults/main.yml
+# Galera 複製執行緒數，建議設為 CPU 核心數或其一半。
+pxc_wsrep_slave_threads: "{{ ansible_processor_vcpus | default(2) }}"

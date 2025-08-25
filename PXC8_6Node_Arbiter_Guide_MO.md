@@ -12,6 +12,8 @@
 
 此腳本用於在部署失敗後，將節點恢復到絕對純淨的狀態，以便重新部署。**僅在需要時執行。**
 
+清理數據節點
+
 ```bash
 # Execute on a failed PXC data node
 #
@@ -38,7 +40,7 @@ sudo apt-get purge -y 'percona*'
 sudo apt-get autoremove -y --purge
 
 # Clean up all remaining directories and file contents
-sudo rm -rf /etc/mysql /var/log/mysql
+sudo rm -rf /var/run/mysqld /etc/mysql /var/log/mysql
 # Critical: Only clear the contents of the PXC data directory
 sudo rm -rf /data/mysql/*
 # Critical: Move old logs to a backup directory to avoid conflicts during reinstallation
@@ -52,6 +54,29 @@ sudo mkdir -p /var/lib/mysql && sudo rm -rf /var/lib/mysql/*
 sudo rm -f /etc/systemd/system/mysqld.service
 sudo rm -f /etc/systemd/system/multi-user.target.wants/mysql.service
 sudo rm -f /etc/systemd/system/multi-user.target.wants/mysql@bootstrap.service
+sudo systemctl daemon-reload
+```
+
+**清理仲裁主機**
+
+```bash
+# Execute on a failed Arbiter node
+
+# Stop the garb service
+sudo systemctl stop garb
+
+# Force dpkg state repair and completely purge the package
+sudo dpkg --configure -a
+sudo apt-get -f install -y
+sudo apt-get purge -y percona-xtradb-cluster-garbd
+sudo apt-get autoremove -y --purge
+
+# Clean up remaining configuration and SSL directories
+# Note: /etc/mysql is used for SSL certs in this guide
+sudo rm -f /etc/default/garb
+sudo rm -rf /etc/mysql
+
+# Reload systemd to remove the garb unit file
 sudo systemctl daemon-reload
 ```
 
