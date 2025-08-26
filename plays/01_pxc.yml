@@ -59,9 +59,18 @@
             name: mysql
             state: stopped
 
+        - name: Wait until all mysqld processes exit (before temp start)
+          ansible.builtin.command: pgrep -x mysqld
+          register: mysqld_pgrep_before_reset
+          changed_when: false
+          failed_when: false
+          retries: 120
+          delay: 1
+          until: mysqld_pgrep_before_reset.rc != 0
+
         - name: Start mysqld without grant tables and wsrep
           ansible.builtin.shell: |
-            nohup mysqld --skip-grant-tables --wsrep-on=OFF > /dev/null 2>&1 &
+            nohup mysqld --skip-grant-tables --wsrep-on=OFF --wsrep-provider=none > /dev/null 2>&1 &
           args:
             executable: /bin/bash
 
@@ -69,7 +78,7 @@
           ansible.builtin.wait_for:
             path: /var/run/mysqld/mysqld.sock
             state: present
-            timeout: 30
+            timeout: 60
           when: (bootstrap_first_node | default(false))
 
         - name: Reset root password to default

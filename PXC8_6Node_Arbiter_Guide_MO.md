@@ -421,7 +421,7 @@ GALERA_OPTIONS="socket.ssl=YES; socket.ssl_key=/etc/mysql/ssl/server-key.pem; so
 sudo systemctl stop mysql
 
 # 2. Start mysqld manually in the background, skipping grant tables and disabling wsrep
-sudo mysqld --skip-grant-tables --wsrep-on=OFF &
+sudo mysqld --skip-grant-tables --wsrep-on=OFF --wsrep-provider=none &
 sleep 5 # Wait for mysqld to start
 
 # 3. Use a heredoc to automatically input commands to reset the root password
