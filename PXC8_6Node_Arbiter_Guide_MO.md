@@ -431,16 +431,12 @@ GALERA_OPTIONS="socket.ssl=YES; socket.ssl_key=/etc/mysql/ssl/server-key.pem; so
 sudo systemctl stop mysql
 
 # 2. Start mysqld manually in the background, skipping grant tables and disabling wsrep
-sudo mysqld --skip-grant-tables --wsrep-on=OFF --wsrep-provider=none &
+sudo mysqld_safe --skip-grant-tables --skip-networking &
 sleep 5 # Wait for mysqld to start
 
 # 3. Use a heredoc to automatically input commands to reset the root password
 # Replace <YOUR_STRONG_PASSWORD> with your actual password
-mysql  --protocol=SOCKET --socket=/var/run/mysqld/mysqld.sock -u root <<EOSQL
-FLUSH PRIVILEGES;
-ALTER USER 'root'@'localhost' IDENTIFIED BY '<YOUR_STRONG_PASSWORD>';
-FLUSH PRIVILEGES;
-EOSQL
+mysql --no-defaults --protocol=SOCKET --socket=/var/run/mysqld/mysqld.sock -u root -e "ALTER USER 'root'@'localhost' IDENTIFIED BY '<YOUR_STRONG_PASSWORD>'; FLUSH PRIVILEGES;"
 
 # 4. Kill the mysqld process we started manually
 sudo pkill mysqld
