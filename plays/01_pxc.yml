@@ -1,4 +1,46 @@
 ---
+# Phase 0: Disable unattended upgrades to avoid apt/dpkg locks
+- hosts: pxc_nodes:pxc_arbiter
+  become: yes
+  gather_facts: false
+  tasks:
+    - name: Stop & mask apt daily timers (avoid auto runs)
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+        masked: true
+        daemon_reload: true
+      loop:
+        - apt-daily.timer
+        - apt-daily-upgrade.timer
+
+    - name: Stop & mask unattended/apt services
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+        masked: true
+      loop:
+        - unattended-upgrades.service
+        - apt-daily.service
+        - apt-daily-upgrade.service
+
+    - name: Disable APT periodic auto upgrades (persistent)
+      ansible.builtin.copy:
+        dest: /etc/apt/apt.conf.d/20auto-upgrades
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          APT::Periodic::Update-Package-Lists "0";
+          APT::Periodic::Unattended-Upgrade "0";
+
+    - name: Wait until dpkg/apt locks are released
+      ansible.builtin.shell: |
+        while fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock >/dev/null 2>&1; do sleep 1; done
+      changed_when: false
+
 - hosts: pxc_nodes
   become: yes
   serial: 1
@@ -70,7 +112,7 @@
 
         - name: Start mysqld without grant tables and wsrep
           ansible.builtin.shell: |
-            nohup mysqld --skip-grant-tables --wsrep-on=OFF --wsrep-provider=none > /dev/null 2>&1 &
+            nohup mysqld_safe --skip-grant-tables --skip-networking --socket=/var/run/mysqld/mysqld.sock > /dev/null 2>&1 &
           args:
             executable: /bin/bash
 
@@ -83,11 +125,7 @@
 
         - name: Reset root password to default
           ansible.builtin.shell: |
-            mysql  --protocol=SOCKET --socket=/var/run/mysqld/mysqld.sock -u root <<'EOSQL'
-            FLUSH PRIVILEGES;
-            ALTER USER 'root'@'localhost' IDENTIFIED BY 'changeme';
-            FLUSH PRIVILEGES;
-            EOSQL
+             mysql --no-defaults --protocol=SOCKET --socket=/var/run/mysqld/mysqld.sock -u root -e "FLUSH PRIVILEGES; ALTER USER 'root'@'localhost' IDENTIFIED BY 'changeme'; FLUSH PRIVILEGES;"
           args:
             executable: /bin/bash
 

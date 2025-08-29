@@ -10,7 +10,7 @@
     marker: "# {mark} PXC CLUSTER HOSTS"
     block: |
       {% for host in (groups['pxc_nodes'] + groups.get('pxc_arbiter', [])) %}
-      {{ hostvars[host].ansible_host }} {{ host }}
+      {{ hostvars[host].wsrep_node_address }} {{ host }}
       {% endfor %}
     owner: root
     group: root
@@ -27,6 +27,77 @@
 
 
 # Phase 2: Repos and packages only (no configuration, no service start)
+
+# --- PRE-CLEAN ---
+- name: Check if Percona/PXC already installed
+  ansible.builtin.shell: >
+    dpkg -s percona-xtradb-cluster percona-server-server 2>/dev/null |
+    awk '/^Status:.*installed/ {print "yes"; exit}'
+  register: percona_present
+  changed_when: false
+  failed_when: false
+
+- block:
+    - name: Detect conflicting MySQL/MariaDB packages (Phase 2 - pre-clean)
+      ansible.builtin.shell: >
+        dpkg -l | awk '/^(ii|rc)\s+(mysql|mariadb)/ && $2 !~ /^percona/ {print $2}'
+      register: mysql_conflicts
+      changed_when: false
+
+    - name: Purge conflicting packages (Phase 2 - pre-clean)
+      ansible.builtin.apt:
+        name: "{{ mysql_conflicts.stdout_lines }}"
+        state: absent
+        purge: true
+      when: mysql_conflicts.stdout_lines | length > 0
+
+    - name: Autoremove & purge leftovers (Phase 2 - pre-clean)
+      ansible.builtin.apt:
+        autoremove: yes
+        purge: yes
+
+    - name: Remove alternative my.cnf links (Phase 2 - pre-clean)
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/alternatives/my.cnf
+        - /etc/alternatives/mysql.cnf
+
+    - name: Remove legacy my.cnf under /etc/mysql (Phase 2 - pre-clean)
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/mysql/my.cnf
+        - /etc/mysql/mysql.cnf
+
+    - name: Force-remove AppArmor profile for mysqld (Phase 2 - pre-clean)
+      ansible.builtin.file:
+        path: /etc/apparmor.d/usr.sbin.mysqld
+        state: absent
+      register: aa_profile
+
+    - name: Reload AppArmor if profile was removed
+      ansible.builtin.systemd:
+        name: apparmor
+        state: reloaded
+      when: aa_profile is changed
+      failed_when: false
+
+    - name: Assert mysqld AppArmor profile is absent
+      ansible.builtin.stat:
+        path: /etc/apparmor.d/usr.sbin.mysqld
+      register: aa_profile_after
+
+    - name: Verify mysqld AppArmor profile is absent
+      ansible.builtin.assert:
+        that:
+          - not aa_profile_after.stat.exists
+        fail_msg: "AppArmor mysqld profile still present at /etc/apparmor.d/usr.sbin.mysqld"
+        success_msg: "AppArmor mysqld profile is absent"
+  when: percona_present.stdout | trim != "yes"
+# --- END PRE-CLEAN ---
 - name: Install prerequisites (Phase 2)
   ansible.builtin.apt:
     name:

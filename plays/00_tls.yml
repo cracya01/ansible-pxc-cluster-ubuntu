@@ -1,4 +1,4 @@
----
+# 00_tls.yml
 - name: Generate CA and per-host certificates on controller
   hosts: localhost
   gather_facts: false
@@ -111,6 +111,7 @@
       community.crypto.openssl_privatekey:
         path: "{{ nodes_dir }}/{{ item }}/server-key.pem"
         size: 2048
+        force: yes
       loop: "{{ pxc_all_nodes }}"
 
     - name: Generate CSR with SAN (DNS + IP) via module
@@ -120,7 +121,8 @@
         common_name: "{{ item }}"
         subject_alt_name:
           - "DNS:{{ item }}"
-          - "IP:{{ hostvars[item].ansible_host }}"
+          - "IP:{{ hostvars[item].wsrep_node_address }}"
+        force: yes    
       loop: "{{ pxc_all_nodes }}"
       when: not (regenerate_tls | default(false))
 
@@ -132,6 +134,7 @@
         ownca_path: "{{ ca_crt }}"
         ownca_privatekey_path: "{{ ca_key }}"
         ownca_not_after: "+3650d"
+        force: yes        # 强制重新签发
       loop: "{{ pxc_all_nodes }}"
       when: not (regenerate_tls | default(false))
 
@@ -178,62 +181,140 @@
         state: absent
       loop: "{{ pxc_all_nodes }}"
 
-- name: Distribute certs to all hosts
-  hosts: pxc_nodes:pxc_arbiter
+# ---------------- PXC 数据节点：强制创建目录 + 强制覆盖 + 强校验 ----------------
+# ---------------- PXC 資料節點：顯式建立 /etc/mysql/ssl + 強制覆蓋 + 校驗 ----------------
+- name: Distribute certs to PXC nodes
+  hosts: pxc_nodes
   become: true
   gather_facts: false
   vars:
     ssl_dir: /etc/mysql/ssl
     nodes_dir: "{{ playbook_dir }}/../tls/nodes"
     ca_crt:   "{{ playbook_dir }}/../tls/ca/ca.pem"
-    owner_user: "{{ 'mysql' if inventory_hostname in groups['pxc_nodes'] else 'root' }}"
-    owner_group: "{{ 'mysql' if inventory_hostname in groups['pxc_nodes'] else 'nogroup' }}"
-    ssl_dir_mode: "{{ '0700' if inventory_hostname in groups['pxc_nodes'] else '0750' }}"
-    key_mode: "{{ '0600' if inventory_hostname in groups['pxc_nodes'] else '0640' }}"
   tasks:
-    - name: Ensure mysql group exists on PXC nodes
+    - name: Ensure mysql group exists
       ansible.builtin.group:
         name: mysql
         state: present
-      when: inventory_hostname in groups['pxc_nodes']
 
-    - name: Ensure mysql user exists on PXC nodes
+    - name: Ensure mysql user exists
       ansible.builtin.user:
         name: mysql
         group: mysql
         system: yes
         state: present
-      when: inventory_hostname in groups['pxc_nodes']
 
-    - name: Ensure SSL directory
+    - name: Ensure /etc/mysql exists
+      ansible.builtin.file:
+        path: /etc/mysql
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Ensure /etc/mysql/ssl exists (mysql:mysql, 0700)
       ansible.builtin.file:
         path: "{{ ssl_dir }}"
         state: directory
-        owner: "{{ owner_user }}"
-        group: "{{ owner_group }}"
-        mode: "{{ ssl_dir_mode }}"
+        owner: mysql
+        group: mysql
+        mode: '0700'
 
-    - name: Copy CA certificate
+    - name: Verify ssl dir exists (pxc)
+      ansible.builtin.stat:
+        path: "{{ ssl_dir }}"
+      register: pxc_ssl_stat
+
+    - name: Fail if ssl dir missing (pxc)
+      ansible.builtin.fail:
+        msg: "SSL dir {{ ssl_dir }} not present after creation (pxc node)!"
+      when: not (pxc_ssl_stat.stat.isdir | default(false))
+
+    - name: Copy CA certificate (0644, force overwrite)
       ansible.builtin.copy:
         src: "{{ ca_crt }}"
         dest: "{{ ssl_dir }}/ca.pem"
-        owner: "{{ owner_user }}"
-        group: "{{ owner_group }}"
+        owner: mysql
+        group: mysql
         mode: '0644'
+        force: true
 
-    - name: Copy server certificate
+    - name: Copy server certificate (0644, force overwrite)
       ansible.builtin.copy:
         src: "{{ nodes_dir }}/{{ inventory_hostname }}/server-cert.pem"
         dest: "{{ ssl_dir }}/server-cert.pem"
-        owner: "{{ owner_user }}"
-        group: "{{ owner_group }}"
+        owner: mysql
+        group: mysql
         mode: '0644'
+        force: true
 
-    - name: Copy server private key
+    - name: Copy server private key (0600, force overwrite)
       ansible.builtin.copy:
         src: "{{ nodes_dir }}/{{ inventory_hostname }}/server-key.pem"
         dest: "{{ ssl_dir }}/server-key.pem"
-        owner: "{{ owner_user }}"
-        group: "{{ owner_group }}"
-        mode: "{{ key_mode }}"
+        owner: mysql
+        group: mysql
+        mode: '0600'
+        force: true
+# ---------------- 仲裁機（garbd）：顯式建立 /etc/mysql/ssl + 強制覆蓋 + 校驗 ----------------
+- name: Distribute certs to arbiter
+  hosts: pxc_arbiter
+  become: true
+  gather_facts: false
+  vars:
+    ssl_dir: /etc/mysql/ssl
+    nodes_dir: "{{ playbook_dir }}/../tls/nodes"
+    ca_crt:   "{{ playbook_dir }}/../tls/ca/ca.pem"
+  tasks:
+    - name: Ensure /etc/mysql exists
+      ansible.builtin.file:
+        path: /etc/mysql
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
 
+    - name: Ensure /etc/mysql/ssl exists (root:nogroup, 0750)
+      ansible.builtin.file:
+        path: "{{ ssl_dir }}"
+        state: directory
+        owner: root
+        group: nogroup
+        mode: '0750'
+
+    - name: Verify ssl dir exists (arbiter)
+      ansible.builtin.stat:
+        path: "{{ ssl_dir }}"
+      register: garb_ssl_stat
+
+    - name: Fail if ssl dir missing (arbiter)
+      ansible.builtin.fail:
+        msg: "SSL dir {{ ssl_dir }} not present after creation (arbiter)!"
+      when: not (garb_ssl_stat.stat.isdir | default(false))
+
+    - name: Copy CA certificate (0644, force overwrite)
+      ansible.builtin.copy:
+        src: "{{ ca_crt }}"
+        dest: "{{ ssl_dir }}/ca.pem"
+        owner: root
+        group: nogroup
+        mode: '0644'
+        force: true
+
+    - name: Copy server certificate (0644, force overwrite)
+      ansible.builtin.copy:
+        src: "{{ nodes_dir }}/{{ inventory_hostname }}/server-cert.pem"
+        dest: "{{ ssl_dir }}/server-cert.pem"
+        owner: root
+        group: nogroup
+        mode: '0644'
+        force: true
+
+    - name: Copy server private key (0640, force overwrite)
+      ansible.builtin.copy:
+        src: "{{ nodes_dir }}/{{ inventory_hostname }}/server-key.pem"
+        dest: "{{ ssl_dir }}/server-key.pem"
+        owner: root
+        group: nogroup
+        mode: '0640'
+        force: true

@@ -8,11 +8,11 @@
 
 ---
 
-## 階段零：環境清理 (可選，用於部署失敗後)
+## 階段零：環境清理 (v9 - 增強版)
 
 此腳本用於在部署失敗後，將節點恢復到絕對純淨的狀態，以便重新部署。**僅在需要時執行。**
 
-清理數據節點
+**清理數據節點**
 
 ```bash
 # Execute on a failed PXC data node
@@ -29,18 +29,27 @@ kill_mysqld_process() {
 # Run cleanup
 kill_mysqld_process
 
-# Rename post-removal scripts that might cause errors, forcing the purge to succeed
-sudo mv /var/lib/dpkg/info/percona-xtradb-cluster-server.postrm /var/lib/dpkg/info/percona-xtradb-cluster-server.postrm.bak 2>/dev/null || true
-sudo mv /var/lib/dpkg/info/percona-xtradb-cluster-server.postinst /var/lib/dpkg/info/percona-xtradb-cluster-server.postinst.bak 2>/dev/null || true
+# 1. (新增) 强制移除所有可能冲突的包，包括 mysql-common
+#    使用 dpkg --purge --force-depends 可以绕过依赖检查，实现最彻底的清除
+sudo dpkg --purge --force-depends percona-xtradb-cluster-server 2>/dev/null || true
+sudo dpkg --purge --force-depends percona-xtradb-cluster-client 2>/dev/null || true
+sudo dpkg --purge --force-depends percona-xtradb-cluster-common 2>/dev/null || true
+sudo dpkg --purge --force-depends mysql-common 2>/dev/null || true
+sudo dpkg --purge --force-depends percona-server-common 2>/dev/null || true # 另一个可能的残留
 
-# Force dpkg state repair and completely purge packages
-sudo dpkg --configure -a
-sudo apt-get -f install -y
-sudo apt-get purge -y 'percona*'
+# 2. (增强) 运行 apt autoremove 来清理第一步留下的孤儿依赖
 sudo apt-get autoremove -y --purge
 
-# Clean up all remaining directories and file contents
-sudo rm -rf /var/run/mysqld /etc/mysql /var/log/mysql
+# 3. (增强) 再次运行 dpkg 修复，确保状态干净
+sudo dpkg --configure -a
+sudo apt-get -f install -y
+
+# 4. (增强) 清理残留目录，增加 /var/lib/mysql-files 和 dpkg info 文件
+sudo rm -rf /etc/mysql /var/lib/mysql /var/lib/mysql-files /var/log/mysql*
+sudo rm -f /var/lib/dpkg/info/mysql*
+sudo rm -f /var/lib/dpkg/info/percona*
+
+# 5. 清理 PXC 数据和日志目录
 # Critical: Only clear the contents of the PXC data directory
 sudo rm -rf /data/mysql/*
 # Critical: Move old logs to a backup directory to avoid conflicts during reinstallation
@@ -50,6 +59,7 @@ sudo mv /data/logs/mysql/* /tmp/mysql_logs_backup_${TIMESTAMP}/ 2>/dev/null || t
 # Critical: Only clear the contents, do not delete the directory itself
 sudo mkdir -p /var/lib/mysql && sudo rm -rf /var/lib/mysql/*
 
+# 6. 清理 Systemd 单元文件
 # Critical: Clean up potentially conflicting systemd unit files and reload the daemon
 sudo rm -f /etc/systemd/system/mysqld.service
 sudo rm -f /etc/systemd/system/multi-user.target.wants/mysql.service
@@ -490,7 +500,7 @@ sudo sed -i 's/^safe_to_bootstrap: .*/safe_to_bootstrap: 1/' /var/lib/mysql/gras
 
 ```bash
 sudo systemctl start mysql@bootstrap.service
-mysql -e "SHOW STATUS LIKE 'wsrep_cluster_size';"   # 預期為 1
+SHOW STATUS LIKE 'wsrep_cluster_size';   # 預期為 1
 ```
 
 若啟動失敗，請檢查 `/data/logs/mysql/mysqld-error.log` 是否有 TLS 相關的 `unknown ca / wrong version number`，代表對端節點尚未以 TLS 正確加入；此時引導節點已啟動為 1 成員，繼續下一步讓其他節點依序加入。
@@ -499,7 +509,7 @@ mysql -e "SHOW STATUS LIKE 'wsrep_cluster_size';"   # 預期為 1
 
 ```bash
 sudo systemctl start mysql
-mysql -e "SHOW STATUS LIKE 'wsrep_cluster_size';"   # 觀察由 1 → 2 → 3 ... 直至 6
+SHOW STATUS LIKE 'wsrep_cluster_size';   # 觀察由 1 → 2 → 3 ... 直至 6
 ```
 
 每加入一台，觀察 `wsrep_cluster_size` 遞增；若某台加入失敗，檢視該台錯誤日誌並排除（見 6.7 排錯）。
@@ -526,12 +536,12 @@ sudo systemctl start mysql
 
 ### 6.7 最終驗證
 
-在任一數據節點驗證：
+在任一數據節點登錄mysql驗證：
 
 ```bash
-mysql -e "SHOW STATUS LIKE 'wsrep_cluster_size';"           # 預期 7（含仲裁器）
-mysql -e "SHOW VARIABLES LIKE 'pxc_encrypt_cluster_traffic';"  # 預期 ON（如已啟用）
-mysql -e "SHOW VARIABLES LIKE 'have_ssl';"                  # 預期 YES
+SHOW STATUS LIKE 'wsrep_cluster_size';          # 預期 7（含仲裁器）
+SHOW VARIABLES LIKE 'pxc_encrypt_cluster_traffic';  # 預期 ON（如已啟用）
+SHOW VARIABLES LIKE 'have_ssl';                  # 預期 YES
 ```
 
 ### 6.8 常見故障排查

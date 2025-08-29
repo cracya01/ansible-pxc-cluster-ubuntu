@@ -10,7 +10,7 @@
     marker: "# {mark} PXC CLUSTER HOSTS"
     block: |
       {% for host in (groups['pxc_nodes'] + groups.get('pxc_arbiter', [])) %}
-      {{ hostvars[host].ansible_host }} {{ host }}
+      {{ hostvars[host].wsrep_node_address | default(hostvars[host].ansible_host) }} {{ host }}
       {% endfor %}
     owner: root
     group: root
