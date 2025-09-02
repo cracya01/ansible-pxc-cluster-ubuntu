@@ -109,7 +109,7 @@ wsrep_provider_options          ="gcs.fc_limit=512; gcs.fc_factor=1.0"
 transaction-isolation           = READ-COMMITTED
 
 # Cluster topology. MUST be identical across all nodes.
-wsrep_cluster_name              = "pxc-mo-cluster"
+wsrep_cluster_name              = "pxc-cluster"
 wsrep_cluster_address           = "gcomm://{{ (groups['pxc_nodes'] + groups.get('pxc_arbiter', [])) | join(',') }}"
 
 # =================================================================

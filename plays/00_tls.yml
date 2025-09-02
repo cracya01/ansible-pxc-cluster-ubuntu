@@ -134,7 +134,7 @@
         ownca_path: "{{ ca_crt }}"
         ownca_privatekey_path: "{{ ca_key }}"
         ownca_not_after: "+3650d"
-        force: yes        # 强制重新签发
+        force: yes        # Force re-signing the certificate
       loop: "{{ pxc_all_nodes }}"
       when: not (regenerate_tls | default(false))
 
@@ -181,8 +181,9 @@
         state: absent
       loop: "{{ pxc_all_nodes }}"
 
-# ---------------- PXC 数据节点：强制创建目录 + 强制覆盖 + 强校验 ----------------
-# ---------------- PXC 資料節點：顯式建立 /etc/mysql/ssl + 強制覆蓋 + 校驗 ----------------
+# -----------------------------------------------------------------------------
+# PXC Data Nodes: Create directories, force overwrite, and verify.
+# -----------------------------------------------------------------------------
 - name: Distribute certs to PXC nodes
   hosts: pxc_nodes
   become: true
@@ -256,7 +257,9 @@
         group: mysql
         mode: '0600'
         force: true
-# ---------------- 仲裁機（garbd）：顯式建立 /etc/mysql/ssl + 強制覆蓋 + 校驗 ----------------
+# -----------------------------------------------------------------------------
+# Arbiter (garbd): Create directories, force overwrite, and verify.
+# -----------------------------------------------------------------------------
 - name: Distribute certs to arbiter
   hosts: pxc_arbiter
   become: true

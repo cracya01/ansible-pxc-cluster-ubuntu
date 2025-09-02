@@ -6,7 +6,7 @@
 GALERA_NODES="{{ (groups['pxc_nodes'] + groups.get('pxc_arbiter', [])) | join(',') }}"
 
 # Cluster name. MUST be IDENTICAL to wsrep_cluster_name.
-GALERA_GROUP="pxc-mo-cluster"
+GALERA_GROUP="pxc-cluster"
 
 # Optional: Galera internal options string (e.g. SSL settings)
 # see https://galeracluster.com/library/documentation/galera-parameters.html
